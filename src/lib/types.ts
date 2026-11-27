@@ -51,7 +51,7 @@ export interface Checkpoint { checkpoint: number; t_s: number; cause: string; ob
 export type Plan = "B1" | "B1S" | "OPT";
 export type Role = "OWNER" | "PLANNER" | "VIEWER";
 export interface RunOptions { plan: Plan; time_limit_s?: number; stability_loop?: boolean }
-export interface Me { email: string | null; plan: "pro" | "demo"; login: boolean; account_url: string; host: string }
+export interface Me { email: string | null; plan: "pro" | "demo"; login: boolean; trial?: boolean; account_url: string; host: string }
 export interface ProjectRow { id: string; code: string; name: string; role: Role; versions: number; runs: number; created_at: string }
 export interface VersionRow { id: string; n: number; input_sha256: string; valid: boolean; note: string; created_at: string; created_by?: string | null }
 export interface StoredRunRow { id: string; version: number | null; plan: Plan; run_hash: string; engine_version: string;

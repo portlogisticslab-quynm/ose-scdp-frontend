@@ -76,6 +76,7 @@ export default function App() {
           <p className="text-xs text-slate-500">G2a, G2b đạt · bản thử nghiệm · engine {health?.engine_version ?? "?"} · solver {health ? (health.ortools ? "OR-Tools sẵn sàng" : "chưa có OR-Tools") : "?"}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {me?.trial && <span className="rounded bg-violet-100 px-2 py-1 text-xs text-violet-800">Thử nghiệm – không lưu</span>}
           {me?.login && (me.email
             ? <span className="text-xs text-slate-600">{me.email} · gói <b>{me.plan === "pro" ? "đầy đủ" : "Demo"}</b> · <a className="text-sky-700 underline" href={me.account_url}>tài khoản Hub</a></span>
             : <a className="rounded border border-sky-700 px-2 py-1 text-xs text-sky-700" href={me.account_url}>Đăng nhập Port &amp; Logistics Hub</a>)}
@@ -98,7 +99,13 @@ export default function App() {
 
       {tab === "01 Dữ liệu" && (
         <div className="space-y-4">
-          {me && (me.email || !me.login) && (
+          {me?.trial && (
+            <div className="rounded border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">
+              <b>Bản thử nghiệm mở:</b> nhập tệp, chạy B1/B1S/tối ưu và tải báo cáo được, nhưng <b>không lưu</b> trên máy chủ.
+              Dự án, phiên bản và thành viên sẽ mở khi đăng nhập bằng tài khoản Port &amp; Logistics Hub được bật.
+            </div>
+          )}
+          {me && !me.trial && (me.email || !me.login) && (
             <ProjectsPanel me={me} doc={doc} current={current} onCurrent={setCurrent} onError={fail}
               onDoc={(d, vid) => load(d, vid)}
               onRun={(r, d, vid) => { load(d, vid).then(() => { setRun(r); setTab("07 Replay 2D/3D"); }); }} />
