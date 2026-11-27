@@ -3,12 +3,13 @@ import BayPlan, { BayLegend } from "./components/BayPlan";
 import Gantt from "./components/Gantt";
 import LineChart from "./components/LineChart";
 import QuayStrip from "./components/QuayStrip";
+import View3D from "./components/View3D";
 import { api, ApiError, download } from "./lib/api";
 import { endTime, fmtTime, ganttBars, stateAt } from "./lib/replay";
 import type { Issue, RunResult, ScdpDoc } from "./lib/types";
 
-const TABS = ["01 Dữ liệu", "02 Bay plan", "03 Thiết bị", "04 Ổn định", "05 Tối ưu & DES", "06 Lần lặp DES", "07 Replay 2D", "08 KPI"] as const;
-const NEEDS_RUN: Tab[] = ["04 Ổn định", "06 Lần lặp DES", "07 Replay 2D", "08 KPI"];
+const TABS = ["01 Dữ liệu", "02 Bay plan", "03 Thiết bị", "04 Ổn định", "05 Tối ưu & DES", "06 Lần lặp DES", "07 Replay 2D/3D", "08 KPI", "09 Kịch bản"] as const;
+const NEEDS_RUN: Tab[] = ["04 Ổn định", "06 Lần lặp DES", "07 Replay 2D/3D", "08 KPI"];
 type Tab = (typeof TABS)[number];
 const groupOf = (bay: number) => Math.floor((bay - 1 - (bay % 2 === 0 ? 1 : 0)) / 4);
 const n = (v: number | null | undefined, d = 2) => (v == null ? "—" : v.toLocaleString("vi-VN", { maximumFractionDigits: d }));
@@ -41,7 +42,7 @@ export default function App() {
   async function doRun() {
     if (!doc) return;
     setBusy(true); setErr("");
-    try { setRun(await api.run(doc, plan, limit, loop)); setTab("07 Replay 2D"); } catch (e) { fail(e); } finally { setBusy(false); }
+    try { setRun(await api.run(doc, plan, limit, loop)); setTab("07 Replay 2D/3D"); } catch (e) { fail(e); } finally { setBusy(false); }
   }
 
   return (
@@ -97,7 +98,8 @@ export default function App() {
       {NEEDS_RUN.includes(tab) && doc && !run && <p className="text-sm text-slate-500">Chạy ở tab 05 trước.</p>}
       {tab === "04 Ổn định" && doc && run && <StabilityTab doc={doc} run={run} />}
       {tab === "06 Lần lặp DES" && doc && run && <ReplicationTab doc={doc} run={run} />}
-      {tab === "07 Replay 2D" && doc && run && <Replay doc={doc} run={run} />}
+      {tab === "07 Replay 2D/3D" && doc && run && <Replay doc={doc} run={run} />}
+      {tab === "09 Kịch bản" && doc && <ScenarioTab doc={doc} ortools={!!health?.ortools} onError={fail} />}
       {tab === "08 KPI" && doc && run && <KpiTab run={run} />}
     </div>
   );
@@ -168,7 +170,8 @@ function RunSummary({ run }: { run: RunResult }) {
     <div className="grid gap-3 md:grid-cols-4">
       <Card label="C_max (DES)" value={fmtTime(k.makespan_s)} sub={`${n(k.makespan_s, 0)} s`} />
       <Card label="Cận dưới LB" value={fmtTime(run.lower_bound.lb)} sub={`khoảng cách ${n(((k.makespan_s - run.lower_bound.lb) / run.lower_bound.lb) * 100, 1)} %`} />
-      <Card label="Solver" value={run.solver ? run.solver.status : "B1 (không giải)"} sub={run.solver ? `gap ${n(run.solver.gap * 100, 1)} % · ${n(run.solver.wall_s, 1)} s` : `${run.plan}`} />
+      <Card label="Solver" value={run.solver ? run.solver.status : `${run.plan} (không giải)`}
+        sub={run.solver ? `gap ${n(run.solver.gap * 100, 1)} % · ${n(run.solver.wall_s, 1)} s${run.chosen ? ` · dùng lịch ${run.chosen.kept} (DES: solver ${n(run.chosen.solver_des_s, 0)} s, B1S ${n(run.chosen.b1s_des_s, 0)} s)` : ""}` : `${run.plan}`} />
       <Card label="Bảo toàn container" value={run.conservation.length ? "LỖI" : "Đạt"} sub={run.conservation[0] ?? "mỗi container về bãi đúng 1 lần"} />
       {run.replications && (
         <Card label={`DES ngẫu nhiên (${run.replications.n} lần)`} value={fmtTime(run.replications.makespan_mean_s)}
@@ -202,6 +205,7 @@ function Replay({ doc, run }: { doc: ScdpDoc; run: RunResult }) {
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(60);
+  const [view, setView] = useState<"2D" | "3D">("2D");
   const state = useMemo(() => stateAt(doc, run.events, t), [doc, run.events, t]);
   const bars = useMemo(() => ganttBars(run.events), [run.events]);
   const active = useMemo(() => {
@@ -243,10 +247,16 @@ function Replay({ doc, run }: { doc: ScdpDoc; run: RunResult }) {
         </select>
         <input type="range" min={0} max={end} step={1} value={t} onChange={(e) => { setPlaying(false); setT(+e.target.value); }} className="min-w-[240px] flex-1" />
         <span className="font-mono">{fmtTime(t)} / {fmtTime(end)}</span>
+        <div className="ml-auto flex overflow-hidden rounded border">
+          {(["2D", "3D"] as const).map((v) => (
+            <button key={v} onClick={() => setView(v)} className={`px-3 py-1 ${view === v ? "bg-slate-800 text-white" : ""}`}>{v}</button>
+          ))}
+        </div>
       </div>
-      <QuayStrip doc={doc} state={state} events={run.events} />
+      {view === "3D" && <View3D doc={doc} state={state} events={run.events} />}
+      {view === "2D" && <QuayStrip doc={doc} state={state} events={run.events} />}
       <div className="grid gap-3 lg:grid-cols-[1fr_260px]">
-        <div className="space-y-2"><BayLegend /><BayPlan doc={doc} state={state} activeGroups={active} /></div>
+        <div className="space-y-2">{view === "2D" && <><BayLegend /><BayPlan doc={doc} state={state} activeGroups={active} /></>}</div>
         <aside className="space-y-2 text-xs">
           <div className="rounded border border-slate-200 bg-white p-2">
             <div className="mb-1 font-semibold">Trạng thái container</div>
@@ -391,6 +401,72 @@ function ReplicationTab({ doc, run }: { doc: ScdpDoc; run: RunResult }) {
       </svg>
       <p className="text-xs text-slate-500">Trục đứng không bắt đầu từ 0 (bắt đầu ở 98 % giá trị nhỏ nhất) để thấy rõ khác biệt giữa các lần lặp.</p>
       <p className="text-xs text-slate-500">Hệ số biến thiên chu kỳ (stochastic_cv) là giả định ESTIMATED cho tới khi hiệu chỉnh bằng log thực (A7).</p>
+    </section>
+  );
+}
+
+type Plan = "B1" | "B1S" | "OPT";
+interface ScenarioRow { label: string; plan: Plan; trucks: number; r?: RunResult; err?: string }
+
+function ScenarioTab({ doc, ortools, onError }: { doc: ScdpDoc; ortools: boolean; onError: (e: unknown) => void }) {
+  const [rows, setRows] = useState<ScenarioRow[]>([]);
+  const [busy, setBusy] = useState(false);
+  const base = doc.trucks.count;
+  async function go() {
+    const plan: ScenarioRow[] = [
+      { label: "B1 – theo quy tắc", plan: "B1", trucks: base },
+      { label: "B1S – chia đều", plan: "B1S", trucks: base },
+      ...(ortools ? [{ label: "Tối ưu CP-SAT", plan: "OPT" as Plan, trucks: base }] : []),
+      { label: `B1S – xe × 0,5 (${Math.max(1, Math.round(base / 2))})`, plan: "B1S", trucks: Math.max(1, Math.round(base / 2)) },
+      { label: `B1S – xe × 1,5 (${Math.round(base * 1.5)})`, plan: "B1S", trucks: Math.round(base * 1.5) },
+    ];
+    setRows(plan); setBusy(true);
+    const out: ScenarioRow[] = [];
+    for (const row of plan) {
+      const d = { ...doc, trucks: { ...doc.trucks, count: row.trucks }, scenario: { ...doc.scenario, des_mode: "DETERMINISTIC", replications: 1 } };
+      try { out.push({ ...row, r: await api.run(d as ScdpDoc, row.plan, 30) }); } catch (e) { out.push({ ...row, err: String(e) }); onError(e); }
+      setRows([...out, ...plan.slice(out.length)]);
+    }
+    setBusy(false);
+  }
+  const ok = rows.filter((x) => x.r);
+  const best = ok.length ? Math.min(...ok.map((x) => x.r!.kpi.makespan_s)) : 0;
+  const W = 960, bh = 22;
+  const maxv = ok.length ? Math.max(...ok.map((x) => x.r!.kpi.makespan_s)) : 1;
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center gap-3">
+        <button onClick={go} disabled={busy} className="rounded bg-sky-700 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50">{busy ? "Đang chạy…" : "Chạy so sánh"}</button>
+        <span className="text-xs text-slate-500">Cùng một bộ dữ liệu (cùng hash đầu vào), DES tất định; độ nhạy theo số xe (AC-10, AC-11).</span>
+      </div>
+      {rows.length > 0 && (
+        <table className="w-full rounded border border-slate-200 bg-white text-sm">
+          <thead><tr className="bg-slate-100 text-left"><th className="p-2">Kịch bản</th><th className="p-2">C_max</th><th className="p-2">So với tốt nhất</th>
+            <th className="p-2">GCR</th><th className="p-2">NCR</th><th className="p-2">Chờ xe (h)</th><th className="p-2">Ổn định FAIL</th></tr></thead>
+          <tbody>{rows.map((x) => (
+            <tr key={x.label} className="border-t">
+              <td className="p-2">{x.label}</td>
+              <td className="p-2">{x.r ? fmtTime(x.r.kpi.makespan_s) : x.err ? "lỗi" : "…"}</td>
+              <td className="p-2">{x.r ? (x.r.kpi.makespan_s === best ? "tốt nhất" : `+${n((x.r.kpi.makespan_s / best - 1) * 100, 1)} %`) : ""}</td>
+              <td className="p-2">{x.r ? n(x.r.kpi.gcr) : ""}</td><td className="p-2">{x.r ? n(x.r.kpi.ncr) : ""}</td>
+              <td className="p-2">{x.r ? n(Object.values(x.r.kpi.truck_wait_hours).reduce((a, b) => a + b, 0), 2) : ""}</td>
+              <td className="p-2">{x.r ? x.r.stability.summary.fail : ""}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+      {ok.length > 0 && (
+        <svg viewBox={`0 0 ${W} ${ok.length * (bh + 8) + 10}`} className="w-full rounded border border-slate-200 bg-white">
+          {ok.map((x, i) => (
+            <g key={x.label}>
+              <text x={6} y={i * (bh + 8) + 20} fontSize={11} fill="#0f172a">{x.label}</text>
+              <rect x={260} y={i * (bh + 8) + 6} width={((W - 360) * x.r!.kpi.makespan_s) / maxv} height={bh}
+                fill={x.r!.kpi.makespan_s === best ? "#059669" : "#38bdf8"} />
+              <text x={266 + ((W - 360) * x.r!.kpi.makespan_s) / maxv} y={i * (bh + 8) + 21} fontSize={10} fill="#334155">{fmtTime(x.r!.kpi.makespan_s)}</text>
+            </g>
+          ))}
+        </svg>
+      )}
     </section>
   );
 }
