@@ -25,9 +25,9 @@ export const api = {
     call<{ doc: ScdpDoc; ok: boolean; issues: Issue[] }>(`/api/v1/import?filename=${encodeURIComponent(f.name)}`,
       { method: "POST", body: await f.arrayBuffer() }),
   validate: (doc: ScdpDoc) => call<{ ok: boolean; issues: Issue[] }>("/api/v1/validate", json(doc)),
-  run: (doc: ScdpDoc, plan: "B1" | "OPT", time_limit_s?: number, stability_loop = false) =>
+  run: (doc: ScdpDoc, plan: "B1" | "B1S" | "OPT", time_limit_s?: number, stability_loop = false) =>
     call<RunResult>("/api/v1/run", json({ doc, options: { plan, time_limit_s, stability_loop } })),
-  report: async (doc: ScdpDoc, plan: "B1" | "OPT", time_limit_s?: number, stability_loop = false) => {
+  report: async (doc: ScdpDoc, plan: "B1" | "B1S" | "OPT", time_limit_s?: number, stability_loop = false) => {
     const r = await fetch(API + "/api/v1/report", json({ doc, options: { plan, time_limit_s, stability_loop } }));
     if (!r.ok) throw new ApiError(r.status, (await r.json().catch(() => null))?.detail);
     const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") ?? "")?.[1] ?? "SCDP_report.xlsx";

@@ -20,7 +20,7 @@ export default function App() {
   const [doc, setDoc] = useState<ScdpDoc | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [run, setRun] = useState<RunResult | null>(null);
-  const [plan, setPlan] = useState<"B1" | "OPT">("B1");
+  const [plan, setPlan] = useState<"B1" | "B1S" | "OPT">("B1");
   const [limit, setLimit] = useState(30);
   const [loop, setLoop] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -67,8 +67,9 @@ export default function App() {
         <section className="space-y-4">
           <div className="flex flex-wrap items-end gap-3 rounded border border-slate-200 bg-white p-3">
             <label className="text-sm">Kế hoạch
-              <select value={plan} onChange={(e) => setPlan(e.target.value as "B1" | "OPT")} className="ml-2 rounded border px-2 py-1">
+              <select value={plan} onChange={(e) => setPlan(e.target.value as "B1" | "B1S" | "OPT")} className="ml-2 rounded border px-2 py-1">
                 <option value="B1">B1 – theo quy tắc</option>
+                <option value="B1S">B1S – chia đều, bay biên làm chung</option>
                 <option value="OPT" disabled={!health?.ortools}>Tối ưu CP-SAT</option>
               </select>
             </label>

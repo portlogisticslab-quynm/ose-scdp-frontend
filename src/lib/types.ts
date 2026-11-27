@@ -29,7 +29,7 @@ export interface Kpi { makespan_s: number; container_moves: number; hatch_moves:
   vessel_rate: number | null; crane_intensity: number | null }
 
 export interface RunResult {
-  run_hash: string; engine_version: string; plan: "B1" | "OPT";
+  run_hash: string; engine_version: string; plan: "B1" | "B1S" | "OPT";
   lower_bound: { lb: number; lb_work: number; lb_bay: number; lb_path: number; work_s: number };
   solver: null | { status: string; makespan: number; bound: number; gap: number; wall_s: number };
   sequences: Record<string, string[]>; kpi: Kpi; events: SimEvent[]; vessel_end_s: number; conservation: string[];
