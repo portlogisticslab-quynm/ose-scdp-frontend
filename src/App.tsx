@@ -5,7 +5,7 @@ import LineChart from "./components/LineChart";
 import QuayStrip from "./components/QuayStrip";
 import ProjectsPanel, { type Current } from "./components/ProjectsPanel";
 import View3D from "./components/View3D";
-import { api, ApiError, download } from "./lib/api";
+import { api, ApiError, download, type FinishedJob, type JobState } from "./lib/api";
 import { endTime, fmtTime, ganttBars, stateAt } from "./lib/replay";
 import type { Issue, Me, RunResult, ScdpDoc } from "./lib/types";
 
@@ -17,11 +17,14 @@ const n = (v: number | null | undefined, d = 2) => (v == null ? "—" : v.toLoca
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("01 Dữ liệu");
-  const [health, setHealth] = useState<{ engine_version: string; ortools: boolean } | null>(null);
+  const [health, setHealth] = useState<{ engine_version: string; ortools: boolean; read_only?: boolean } | null>(null);
+  const [progress, setProgress] = useState<JobState | null>(null);
+  const [lastJob, setLastJob] = useState<FinishedJob | null>(null);
   const [cases, setCases] = useState<{ id: string; title: string; containers: number; data_status: string }[]>([]);
   const [doc, setDoc] = useState<ScdpDoc | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
-  const [run, setRun] = useState<RunResult | null>(null);
+  const [run, setRunState] = useState<(RunResult & { run_id?: string }) | null>(null);
+  const setRun = (r: (RunResult & { run_id?: string }) | null) => { setRunState(r); if (!r) setLastJob(null); };
   const [plan, setPlan] = useState<"B1" | "B1S" | "OPT">("B1");
   const [limit, setLimit] = useState(30);
   const [loop, setLoop] = useState(true);
@@ -47,18 +50,22 @@ export default function App() {
   async function doRun() {
     if (!doc) return;
     setBusy(true); setErr("");
+    const opts = { plan, time_limit_s: limit, stability_loop: loop };
     try {
       const p = current.project;
-      if (p && p.role !== "VIEWER") {
+      let fj: FinishedJob;
+      if (p && p.role !== "VIEWER" && !health?.read_only) {
         // the version endpoint returns the existing version when the document is unchanged
         const v = await api.saveVersion(p.id, doc);
-        setRun(await api.projectRun(p.id, v.id, { plan, time_limit_s: limit, stability_loop: loop }));
+        fj = await api.projectJob(p.id, v.id, opts, setProgress);
         setCurrent({ project: await api.project(p.id), versionId: v.id });
       } else {
-        setRun(await api.run(doc, plan, limit, loop));
+        fj = await api.runJob(doc, opts, setProgress);
       }
+      setRunState(fj.result);
+      setLastJob(fj);
       setTab("07 Replay 2D/3D");
-    } catch (e) { fail(e); } finally { setBusy(false); }
+    } catch (e) { fail(e); } finally { setBusy(false); setProgress(null); }
   }
 
   return (
@@ -66,7 +73,7 @@ export default function App() {
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">OSE Smart Container Discharge Planner</h1>
-          <p className="text-xs text-slate-500">Bản phát triển (G2a, G2b đạt) · engine {health?.engine_version ?? "?"} · solver {health ? (health.ortools ? "OR-Tools sẵn sàng" : "chưa có OR-Tools") : "?"}</p>
+          <p className="text-xs text-slate-500">G2a, G2b đạt · bản thử nghiệm · engine {health?.engine_version ?? "?"} · solver {health ? (health.ortools ? "OR-Tools sẵn sàng" : "chưa có OR-Tools") : "?"}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {me?.login && (me.email
@@ -82,6 +89,11 @@ export default function App() {
             className={`rounded-t px-3 py-2 text-sm ${tab === t ? "border border-b-white border-slate-200 bg-white font-medium" : "text-slate-500 hover:text-slate-800 disabled:opacity-40"}`}>{t}</button>
         ))}
       </nav>
+      {health?.read_only && (
+        <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
+          Máy chủ chính đang bảo trì – đang dùng máy dự phòng: xem được dự án (bản sao đêm qua) và chạy tạm, <b>không lưu</b>.
+        </div>
+      )}
       {err && <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{err}</div>}
 
       {tab === "01 Dữ liệu" && (
@@ -112,15 +124,16 @@ export default function App() {
               <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />Vòng lặp ổn định (D-09)
             </label>
             <button onClick={doRun} disabled={busy || issues.some((i) => i.severity === "ERROR")}
-              className="rounded bg-sky-700 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50">{busy ? "Đang chạy…" : "Lập lịch + mô phỏng"}</button>
+              className="rounded bg-sky-700 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50">{busy ? (progress?.status === "queued" ? `Đang chờ (${progress.queued_ahead} lượt trước)…` : `Đang chạy… ${progress ? Math.round(progress.elapsed_s) + " s" : ""}`) : "Lập lịch + mô phỏng"}</button>
             <span className="text-xs text-slate-500">DES {doc.scenario.des_mode === "STOCHASTIC" ? `ngẫu nhiên, ${doc.scenario.replications} lần lặp` : "tất định"}</span>
           </div>
           {run && <RunSummary run={run} />}
           {run && (
             <div className="flex gap-2">
               <button className="rounded border px-3 py-1 text-sm" onClick={() => download(JSON.stringify(run), `SCDP_${doc.meta.project_code}_${run.plan}_${run.run_hash.slice(0, 8)}.json`)}>Tải kết quả JSON</button>
-              <button className="rounded border px-3 py-1 text-sm" disabled={busy}
-                onClick={async () => { setBusy(true); try { await api.report(doc, plan, limit, loop); } catch (e) { fail(e); } finally { setBusy(false); } }}>Tải báo cáo Excel</button>
+              <button className="rounded border px-3 py-1 text-sm"
+                disabled={busy || (!run.run_id && !lastJob)}
+                onClick={async () => { setBusy(true); try { await api.report(run.run_id ? { runId: run.run_id } : { job: lastJob! }); } catch (e) { fail(e); } finally { setBusy(false); } }}>Tải báo cáo Excel</button>
             </div>
           )}
         </section>

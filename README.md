@@ -1,4 +1,4 @@
-# OSE-SCDP frontend (P3-2)
+# OSE-SCDP frontend (G3)
 
 React + TypeScript (Vite) + Tailwind. Gọi API `ose-scdp-backend` (mặc định `http://127.0.0.1:8000`, đổi bằng `VITE_API_BASE`).
 
@@ -13,3 +13,14 @@ npm test            # T15: replay 2D (7) + 3D (4)
 npm run typecheck
 npm run dev         # http://localhost:5173 (API phải đang chạy)
 ```
+
+## Triển khai (G3)
+
+Cloudflare Pages `ose-scdp-frontend`: build `npm run build`, output `dist`, biến `NODE_VERSION=20`. Tên miền `scdp.ose.vn`.
+`.env.production` (được commit, không có bí mật):
+
+- `VITE_API_HOME=https://api-scdp.ose.vn` – Worker `ose-failover` (VPS trước, máy nhà sau).
+- `VITE_API_BACKUP=https://api-scdp-home.ose.vn` – chỉ dùng cho đúng một lần gọi khi không tới được Worker (lỗi mạng, 502, 504).
+- `VITE_OSE_PASS=1` – gửi cookie đăng nhập Port & Logistics Hub.
+
+Mọi lần chạy là job nền (`POST /api/v1/jobs`), giao diện hỏi tiến độ trên đúng máy đã nhận job.
