@@ -33,8 +33,13 @@ export interface RunResult {
   lower_bound: { lb: number; lb_work: number; lb_bay: number; lb_path: number; work_s: number };
   solver: null | { status: string; makespan: number; bound: number; gap: number; wall_s: number };
   sequences: Record<string, string[]>; kpi: Kpi; events: SimEvent[]; vessel_end_s: number; conservation: string[];
-  stability: { summary: { checkpoints: number; by_status: Record<string, number>; pass: number };
-    checkpoints: { checkpoint: number; t_s: number; cause: string; object: string; status: string; reasons: string[] }[] };
+  stability: { summary: { checkpoints: number; by_status: Record<string, number>; pass: number; fail: number;
+      max_abs_heel_deg?: number; min_gmcorr_m?: number };
+    checkpoints: Checkpoint[] };
   replications?: { n: number; makespan_mean_s: number; makespan_sd_s: number; makespan_p90_s: number; makespans_s: number[] };
   wall_s: number;
 }
+
+export interface Checkpoint { checkpoint: number; t_s: number; cause: string; object: string; status: string; reasons: string[];
+  values?: { heel_deg?: number | null; gmcorr_m?: number; trim_m?: number; draft_m?: number; disp_t?: number };
+  failed?: { limit_id: string; value: number; limit: number }[]; binding?: { limit_id: string; utilisation: number | null } | null }

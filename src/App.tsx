@@ -48,7 +48,7 @@ export default function App() {
           <h1 className="text-xl font-semibold text-slate-900">OSE Smart Container Discharge Planner</h1>
           <p className="text-xs text-slate-500">Bản phát triển G2a · engine {health?.engine_version ?? "?"} · solver {health ? (health.ortools ? "OR-Tools sẵn sàng" : "chưa có OR-Tools") : "?"}</p>
         </div>
-        <span className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">Ổn định tàu: NOT VERIFIED (G2a) – không dùng cho tác nghiệp</span>
+        <span className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">Ổn định tàu: G2b – chưa đối chiếu loading computer, không có PASS – không dùng cho tác nghiệp</span>
       </header>
       <nav className="mb-4 flex flex-wrap gap-1 border-b border-slate-200">
         {TABS.map((t) => (
@@ -156,7 +156,10 @@ function RunSummary({ run }: { run: RunResult }) {
         <Card label={`DES ngẫu nhiên (${run.replications.n} lần)`} value={fmtTime(run.replications.makespan_mean_s)}
           sub={`SD ${n(run.replications.makespan_sd_s, 0)} s · P90 ${fmtTime(run.replications.makespan_p90_s)}`} />
       )}
-      <Card label="Ổn định" value={`${run.stability.summary.checkpoints} checkpoint`} sub="tất cả NOT VERIFIED (G2a)" />
+      <Card label="Ổn định (G2b)" value={run.stability.summary.fail ? `${run.stability.summary.fail} FAIL` : `${run.stability.summary.checkpoints} checkpoint`}
+        sub={run.stability.summary.max_abs_heel_deg != null
+          ? `nghiêng lớn nhất ${n(run.stability.summary.max_abs_heel_deg, 3)}° · GMcorr nhỏ nhất ${n(run.stability.summary.min_gmcorr_m, 3)} m`
+          : "không có dữ liệu thủy tĩnh → NOT VERIFIED"} />
       <Card label="Mã lần chạy" value={run.run_hash.slice(0, 12)} sub={`engine ${run.engine_version}`} />
     </div>
   );
@@ -205,6 +208,7 @@ function Replay({ doc, run }: { doc: ScdpDoc; run: RunResult }) {
   }, [playing, speed, end]);
   const nextEvent = () => { const e = run.events.find((x) => x.t_s > t + 1e-9); if (e) setT(e.t_s); };
   const recent = run.events.filter((e) => e.t_s <= t).slice(-6).reverse();
+  const cp = [...run.stability.checkpoints].reverse().find((c) => c.t_s <= t);
   const counts = Object.values(state.boxes).reduce<Record<string, number>>((a, b) => ({ ...a, [b.status]: (a[b.status] ?? 0) + 1 }), {});
   return (
     <section className="space-y-3">
@@ -227,6 +231,18 @@ function Replay({ doc, run }: { doc: ScdpDoc; run: RunResult }) {
             {["ON_SHIP", "LIFTED", "ON_TRUCK", "ON_QUAY", "AT_YARD"].map((k) => (
               <div key={k} className="flex justify-between"><span>{({ ON_SHIP: "Trên tàu", LIFTED: "Đang nhấc", ON_TRUCK: "Trên xe", ON_QUAY: "Tạm trên bến", AT_YARD: "Đã về bãi" } as Record<string, string>)[k]}</span><b>{counts[k] ?? 0}</b></div>
             ))}
+          </div>
+          <div className={`rounded border p-2 ${cp?.status === "FAIL" ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"}`}>
+            <div className="mb-1 font-semibold">Ổn định tại thời điểm này</div>
+            {!cp && <div className="text-slate-500">Chưa có thay đổi tải trọng</div>}
+            {cp && (<>
+              <div className={cp.status === "FAIL" ? "font-semibold text-red-700" : "text-amber-700"}>{cp.status}</div>
+              {cp.values?.heel_deg != null && <div className="flex justify-between"><span>Nghiêng</span><b>{n(cp.values.heel_deg, 3)}°</b></div>}
+              {cp.values?.gmcorr_m != null && <div className="flex justify-between"><span>GMcorr</span><b>{n(cp.values.gmcorr_m, 3)} m</b></div>}
+              {cp.values?.trim_m != null && <div className="flex justify-between"><span>Chúi</span><b>{n(cp.values.trim_m * 100, 1)} cm</b></div>}
+              {cp.failed?.map((f) => <div key={f.limit_id} className="text-red-700">{f.limit_id}: {n(f.value, 3)} / {n(f.limit, 3)}</div>)}
+              <div className="mt-1 text-[10px] text-slate-500">{cp.reasons[0]}</div>
+            </>)}
           </div>
           <div className="rounded border border-slate-200 bg-white p-2">
             <div className="mb-1 font-semibold">Sự kiện gần nhất</div>
