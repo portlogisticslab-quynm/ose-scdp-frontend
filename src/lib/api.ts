@@ -27,4 +27,18 @@ export const api = {
   validate: (doc: ScdpDoc) => call<{ ok: boolean; issues: Issue[] }>("/api/v1/validate", json(doc)),
   run: (doc: ScdpDoc, plan: "B1" | "OPT", time_limit_s?: number, stability_loop = false) =>
     call<RunResult>("/api/v1/run", json({ doc, options: { plan, time_limit_s, stability_loop } })),
+  report: async (doc: ScdpDoc, plan: "B1" | "OPT", time_limit_s?: number, stability_loop = false) => {
+    const r = await fetch(API + "/api/v1/report", json({ doc, options: { plan, time_limit_s, stability_loop } }));
+    if (!r.ok) throw new ApiError(r.status, (await r.json().catch(() => null))?.detail);
+    const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") ?? "")?.[1] ?? "SCDP_report.xlsx";
+    download(await r.blob(), name);
+  },
 };
+
+export function download(data: Blob | string, name: string, type = "application/json") {
+  const blob = typeof data === "string" ? new Blob([data], { type }) : data;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}

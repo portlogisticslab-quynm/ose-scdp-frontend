@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import BayPlan, { BayLegend } from "./components/BayPlan";
 import Gantt from "./components/Gantt";
+import LineChart from "./components/LineChart";
 import QuayStrip from "./components/QuayStrip";
-import { api, ApiError } from "./lib/api";
+import { api, ApiError, download } from "./lib/api";
 import { endTime, fmtTime, ganttBars, stateAt } from "./lib/replay";
 import type { Issue, RunResult, ScdpDoc } from "./lib/types";
 
-const TABS = ["01 Dữ liệu", "02 Bay plan", "05 Tối ưu & DES", "07 Replay 2D", "08 KPI"] as const;
+const TABS = ["01 Dữ liệu", "02 Bay plan", "03 Thiết bị", "04 Ổn định", "05 Tối ưu & DES", "06 Lần lặp DES", "07 Replay 2D", "08 KPI"] as const;
+const NEEDS_RUN: Tab[] = ["04 Ổn định", "06 Lần lặp DES", "07 Replay 2D", "08 KPI"];
 type Tab = (typeof TABS)[number];
 const groupOf = (bay: number) => Math.floor((bay - 1 - (bay % 2 === 0 ? 1 : 0)) / 4);
 const n = (v: number | null | undefined, d = 2) => (v == null ? "—" : v.toLocaleString("vi-VN", { maximumFractionDigits: d }));
@@ -47,7 +49,7 @@ export default function App() {
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">OSE Smart Container Discharge Planner</h1>
-          <p className="text-xs text-slate-500">Bản phát triển G2a · engine {health?.engine_version ?? "?"} · solver {health ? (health.ortools ? "OR-Tools sẵn sàng" : "chưa có OR-Tools") : "?"}</p>
+          <p className="text-xs text-slate-500">Bản phát triển (G2a, G2b đạt) · engine {health?.engine_version ?? "?"} · solver {health ? (health.ortools ? "OR-Tools sẵn sàng" : "chưa có OR-Tools") : "?"}</p>
         </div>
         <span className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">Ổn định tàu: G2b – chưa đối chiếu loading computer, không có PASS – không dùng cho tác nghiệp</span>
       </header>
@@ -81,10 +83,21 @@ export default function App() {
             <span className="text-xs text-slate-500">DES {doc.scenario.des_mode === "STOCHASTIC" ? `ngẫu nhiên, ${doc.scenario.replications} lần lặp` : "tất định"}</span>
           </div>
           {run && <RunSummary run={run} />}
+          {run && (
+            <div className="flex gap-2">
+              <button className="rounded border px-3 py-1 text-sm" onClick={() => download(JSON.stringify(run), `SCDP_${doc.meta.project_code}_${run.plan}_${run.run_hash.slice(0, 8)}.json`)}>Tải kết quả JSON</button>
+              <button className="rounded border px-3 py-1 text-sm" disabled={busy}
+                onClick={async () => { setBusy(true); try { await api.report(doc, plan, limit, loop); } catch (e) { fail(e); } finally { setBusy(false); } }}>Tải báo cáo Excel</button>
+            </div>
+          )}
         </section>
       )}
-      {tab === "07 Replay 2D" && doc && (run ? <Replay doc={doc} run={run} /> : <p className="text-sm text-slate-500">Chạy ở tab 05 trước.</p>)}
-      {tab === "08 KPI" && doc && (run ? <KpiTab run={run} /> : <p className="text-sm text-slate-500">Chạy ở tab 05 trước.</p>)}
+      {tab === "03 Thiết bị" && doc && <EquipmentTab doc={doc} />}
+      {NEEDS_RUN.includes(tab) && doc && !run && <p className="text-sm text-slate-500">Chạy ở tab 05 trước.</p>}
+      {tab === "04 Ổn định" && doc && run && <StabilityTab doc={doc} run={run} />}
+      {tab === "06 Lần lặp DES" && doc && run && <ReplicationTab doc={doc} run={run} />}
+      {tab === "07 Replay 2D" && doc && run && <Replay doc={doc} run={run} />}
+      {tab === "08 KPI" && doc && run && <KpiTab run={run} />}
     </div>
   );
 }
@@ -281,6 +294,102 @@ function KpiTab({ run }: { run: RunResult }) {
         ))}</tbody>
       </table>
       <p className="text-xs text-slate-500">KPI tính lại từ event log (AC-08). Định nghĩa GCR/NCR theo G1-08 và Phần 1 mục 4.3.</p>
+    </section>
+  );
+}
+
+function Table({ head, rows }: { head: string[]; rows: (string | number | null | undefined)[][] }) {
+  return (
+    <table className="w-full rounded border border-slate-200 bg-white text-xs">
+      <thead><tr className="bg-slate-100 text-left">{head.map((h) => <th key={h} className="p-1.5">{h}</th>)}</tr></thead>
+      <tbody>{rows.map((r, i) => <tr key={i} className="border-t">{r.map((c, j) => <td key={j} className="p-1.5">{c ?? "—"}</td>)}</tr>)}</tbody>
+    </table>
+  );
+}
+
+function EquipmentTab({ doc }: { doc: ScdpDoc }) {
+  const d = doc as Record<string, any>;
+  return (
+    <section className="space-y-4">
+      <h2 className="text-sm font-semibold">Cẩu bờ (QC)</h2>
+      <Table head={["QC", "Thứ tự", "Ray (m)", "Vị trí đầu (m)", "Sẵn sàng từ (s)", "δ (bay)", "Gantry (m/s)", "Twin", "Mô hình chu kỳ"]}
+        rows={d.quay_cranes.map((q: any) => [q.qc_id, q.order, `${q.rail_min_x_m}–${q.rail_max_x_m}`, q.initial_x_m, q.available_from_s,
+          q.safety_gap_bays, q.gantry_speed_m_s, q.twin_lift ? "có" : "không", q.time_model_id])} />
+      <h2 className="text-sm font-semibold">Mô hình chu kỳ QC</h2>
+      <Table head={["Mã", "Cơ sở (s)", "/row (s)", "/tier (s)", "Hầm (+s)", "Twin (+s)", "Đặc biệt (+s)", "Nguồn"]}
+        rows={d.crane_time_models.map((m: any) => [m.time_model_id, m.base_cycle_s, m.per_row_s, m.per_tier_s, m.hold_extra_s, m.twin_extra_s,
+          m.special_extra_s, m.source])} />
+      <div className="grid gap-3 md:grid-cols-2">
+        <div><h2 className="mb-1 text-sm font-semibold">Xe vận chuyển ngang</h2>
+          <Table head={["Số xe", "Loại", "Chở 2×20'", "Điều xe"]} rows={[[d.trucks.count, d.trucks.type, d.trucks.twin_capable ? "có" : "không", d.trucks.dispatch_rule]]} /></div>
+        <div><h2 className="mb-1 text-sm font-semibold">Lashing</h2>
+          <Table head={["Số tổ", "Tháo chằng (s)", "Tháo twistlock (s)"]} rows={[[d.lashing?.gangs, d.lashing?.unlash_per_container_s, d.lashing?.decon_s]]} /></div>
+      </div>
+      <h2 className="text-sm font-semibold">Điểm nhận ở bãi</h2>
+      <Table head={["Mã", "Đi (s)", "Về (s)", "Nhận (s)", "Song song", "Khoá"]}
+        rows={d.yard_receivers.map((r: any) => [r.receiver_id, r.travel_from_quay_s, r.travel_to_quay_s, r.handling_s, r.parallel,
+          r.blocked_from_s != null ? `${r.blocked_from_s}–${r.blocked_to_s} s` : "—"])} />
+    </section>
+  );
+}
+
+function StabilityTab({ doc, run }: { doc: ScdpDoc; run: RunResult }) {
+  const cps = run.stability.checkpoints;
+  const end = endTime(run.events);
+  const heel = cps.filter((c) => c.values?.heel_deg != null).map((c) => [c.t_s, c.values!.heel_deg!] as [number, number]);
+  const gm = cps.filter((c) => c.values?.gmcorr_m != null).map((c) => [c.t_s, c.values!.gmcorr_m!] as [number, number]);
+  const trim = cps.filter((c) => c.values?.trim_m != null).map((c) => [c.t_s, c.values!.trim_m! * 100] as [number, number]);
+  const lims = ((doc as Record<string, any>).limits ?? []) as { quantity: string; value: number; limit_id: string }[];
+  const heelLim = lims.filter((l) => l.quantity === "HEEL_ABS_MAX").flatMap((l) => [{ value: l.value, label: l.limit_id }, { value: -l.value, label: "" }]);
+  const gmLim = lims.filter((l) => l.quantity === "GM_CORR_MIN").map((l) => ({ value: l.value, label: l.limit_id }));
+  const fails = cps.filter((c) => c.status === "FAIL");
+  const reasons = [...new Set(cps.flatMap((c) => c.reasons))];
+  return (
+    <section className="space-y-3">
+      <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+        Kết quả ổn định chỉ là FAIL hoặc NOT VERIFIED cho tới khi đối chiếu loading computer được duyệt (G2c). Không dùng để ra quyết định khai thác.
+      </div>
+      {!heel.length && <p className="text-sm text-slate-500">Bộ dữ liệu không có bảng thủy tĩnh – không tính được giá trị, mọi checkpoint NOT VERIFIED.</p>}
+      {heel.length > 0 && <LineChart title="Góc nghiêng theo thời gian" unit="độ" tMax={end} series={[{ name: "nghiêng", color: "#2563eb", points: heel }]} limits={heelLim} />}
+      {gm.length > 0 && <LineChart title="GMcorr theo thời gian" unit="m" tMax={end} series={[{ name: "GMcorr", color: "#059669", points: gm }]} limits={gmLim} />}
+      {trim.length > 0 && <LineChart title="Chúi theo thời gian (+ về lái)" unit="cm" tMax={end} series={[{ name: "chúi", color: "#7c3aed", points: trim }]} height={150} />}
+      <h2 className="text-sm font-semibold">Checkpoint FAIL ({fails.length}/{cps.length})</h2>
+      {fails.length ? (
+        <Table head={["#", "Thời điểm", "Đối tượng", "Giới hạn", "Giá trị", "Ngưỡng"]}
+          rows={fails.flatMap((c) => (c.failed ?? []).map((f) => [c.checkpoint, fmtTime(c.t_s), c.object, f.limit_id, n(f.value, 3), n(f.limit, 3)]))} />
+      ) : <p className="text-sm text-slate-600">Không có checkpoint FAIL.</p>}
+      <h2 className="text-sm font-semibold">Lý do chưa xác nhận</h2>
+      <ul className="list-disc pl-5 text-xs text-slate-600">{reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+    </section>
+  );
+}
+
+function ReplicationTab({ doc, run }: { doc: ScdpDoc; run: RunResult }) {
+  const rp = run.replications;
+  if (!rp) return <p className="text-sm text-slate-500">Bộ dữ liệu chạy DES tất định ({doc.scenario.des_mode}); đổi scenario.des_mode = STOCHASTIC để chạy nhiều lần lặp.</p>;
+  const vals = rp.makespans_s, lo = Math.min(...vals), hi = Math.max(...vals);
+  const W = 960, H = 160, bw = (W - 60) / vals.length;
+  const sy = (v: number) => H - 24 - ((H - 44) * (v - lo * 0.98)) / Math.max(1, hi - lo * 0.98);
+  return (
+    <section className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-4">
+        <Card label="Số lần lặp" value={String(rp.n)} sub={`seed ${doc.scenario.seed}`} />
+        <Card label="C_max trung bình" value={fmtTime(rp.makespan_mean_s)} sub={`${n(rp.makespan_mean_s, 0)} s`} />
+        <Card label="Độ lệch chuẩn" value={`${n(rp.makespan_sd_s, 0)} s`} />
+        <Card label="P90" value={fmtTime(rp.makespan_p90_s)} />
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full rounded border border-slate-200 bg-white">
+        {vals.map((v, i) => (
+          <g key={i}><rect x={50 + i * bw + 2} y={sy(v)} width={bw - 4} height={H - 24 - sy(v)} fill="#38bdf8"><title>Lần {i + 1}: {fmtTime(v)}</title></rect>
+            <text x={50 + i * bw + bw / 2} y={H - 8} fontSize={9} textAnchor="middle" fill="#64748b">{i + 1}</text></g>
+        ))}
+        <text x={46} y={sy(hi) + 3} fontSize={9} textAnchor="end" fill="#64748b">{fmtTime(hi)}</text>
+        <text x={46} y={H - 24} fontSize={9} textAnchor="end" fill="#64748b">{fmtTime(lo * 0.98)}</text>
+        <line x1={50} x2={W - 8} y1={sy(rp.makespan_mean_s)} y2={sy(rp.makespan_mean_s)} stroke="#0f172a" strokeDasharray="4 3" />
+        <text x={W - 10} y={sy(rp.makespan_mean_s) - 4} fontSize={10} textAnchor="end">trung bình</text>
+      </svg>
+      <p className="text-xs text-slate-500">Trục đứng không bắt đầu từ 0 (bắt đầu ở 98 % giá trị nhỏ nhất) để thấy rõ khác biệt giữa các lần lặp.</p>
+      <p className="text-xs text-slate-500">Hệ số biến thiên chu kỳ (stochastic_cv) là giả định ESTIMATED cho tới khi hiệu chỉnh bằng log thực (A7).</p>
     </section>
   );
 }
