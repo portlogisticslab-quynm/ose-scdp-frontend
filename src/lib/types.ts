@@ -36,6 +36,8 @@ export interface RunResult {
   stability: { summary: { checkpoints: number; by_status: Record<string, number>; pass: number; fail: number;
       max_abs_heel_deg?: number; min_gmcorr_m?: number };
     checkpoints: Checkpoint[] };
+  stability_loop?: null | { status: string; iterations: number;
+    cuts: { iteration: number; before: string; after: string; t_s: number; limit: string | null }[] };
   replications?: { n: number; makespan_mean_s: number; makespan_sd_s: number; makespan_p90_s: number; makespans_s: number[] };
   wall_s: number;
 }

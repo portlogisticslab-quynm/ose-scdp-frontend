@@ -20,6 +20,7 @@ export default function App() {
   const [run, setRun] = useState<RunResult | null>(null);
   const [plan, setPlan] = useState<"B1" | "OPT">("B1");
   const [limit, setLimit] = useState(30);
+  const [loop, setLoop] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -38,7 +39,7 @@ export default function App() {
   async function doRun() {
     if (!doc) return;
     setBusy(true); setErr("");
-    try { setRun(await api.run(doc, plan, limit)); setTab("07 Replay 2D"); } catch (e) { fail(e); } finally { setBusy(false); }
+    try { setRun(await api.run(doc, plan, limit, loop)); setTab("07 Replay 2D"); } catch (e) { fail(e); } finally { setBusy(false); }
   }
 
   return (
@@ -71,6 +72,9 @@ export default function App() {
             </label>
             <label className="text-sm">Giới hạn thời gian giải (s)
               <input type="number" min={1} max={600} value={limit} onChange={(e) => setLimit(+e.target.value)} className="ml-2 w-20 rounded border px-2 py-1" />
+            </label>
+            <label className="flex items-center gap-1 text-sm">
+              <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />Vòng lặp ổn định (D-09)
             </label>
             <button onClick={doRun} disabled={busy || issues.some((i) => i.severity === "ERROR")}
               className="rounded bg-sky-700 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50">{busy ? "Đang chạy…" : "Lập lịch + mô phỏng"}</button>
@@ -160,6 +164,10 @@ function RunSummary({ run }: { run: RunResult }) {
         sub={run.stability.summary.max_abs_heel_deg != null
           ? `nghiêng lớn nhất ${n(run.stability.summary.max_abs_heel_deg, 3)}° · GMcorr nhỏ nhất ${n(run.stability.summary.min_gmcorr_m, 3)} m`
           : "không có dữ liệu thủy tĩnh → NOT VERIFIED"} />
+      {run.stability_loop && (
+        <Card label="Vòng lặp ổn định (D-09)" value={({ NO_FAIL: "Không còn FAIL", NO_CUT: "Không sửa được", MAX_ITER: "Hết số vòng", DEADLOCK: "Kẹt trình tự" } as Record<string, string>)[run.stability_loop.status] ?? run.stability_loop.status}
+          sub={`${run.stability_loop.iterations} vòng · ${run.stability_loop.cuts.length} ràng buộc thứ tự thêm vào`} />
+      )}
       <Card label="Mã lần chạy" value={run.run_hash.slice(0, 12)} sub={`engine ${run.engine_version}`} />
     </div>
   );
