@@ -46,3 +46,15 @@ export interface RunResult {
 export interface Checkpoint { checkpoint: number; t_s: number; cause: string; object: string; status: string; reasons: string[];
   values?: { heel_deg?: number | null; gmcorr_m?: number; trim_m?: number; draft_m?: number; disp_t?: number };
   failed?: { limit_id: string; value: number; limit: number }[]; binding?: { limit_id: string; utilisation: number | null } | null }
+
+// P3-3: hub login, projects, versions, stored runs
+export type Plan = "B1" | "B1S" | "OPT";
+export type Role = "OWNER" | "PLANNER" | "VIEWER";
+export interface RunOptions { plan: Plan; time_limit_s?: number; stability_loop?: boolean }
+export interface Me { email: string | null; plan: "pro" | "demo"; login: boolean; account_url: string; host: string }
+export interface ProjectRow { id: string; code: string; name: string; role: Role; versions: number; runs: number; created_at: string }
+export interface VersionRow { id: string; n: number; input_sha256: string; valid: boolean; note: string; created_at: string; created_by?: string | null }
+export interface StoredRunRow { id: string; version: number | null; plan: Plan; run_hash: string; engine_version: string;
+  makespan_s: number | null; gcr: number | null; stability_fail: number; created_at: string; created_by: string | null }
+export interface ProjectInfo { id: string; code: string; name: string; role: Role;
+  members: { user_id: string; email: string | null; role: Role }[]; versions: VersionRow[]; runs: StoredRunRow[] }

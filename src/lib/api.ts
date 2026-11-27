@@ -1,4 +1,4 @@
-import type { Issue, RunResult, ScdpDoc } from "./types";
+import type { Issue, Me, Role, ProjectInfo, ProjectRow, RunOptions, RunResult, ScdpDoc, VersionRow } from "./types";
 
 export const API = (import.meta.env.VITE_API_BASE as string | undefined) ?? "http://127.0.0.1:8000";
 
@@ -8,8 +8,11 @@ export class ApiError extends Error {
   }
 }
 
+// With the Hub login (VITE_OSE_PASS=1) the ose_pass cookie must travel to the API host.
+const CRED: RequestCredentials = import.meta.env.VITE_OSE_PASS === "1" ? "include" : "same-origin";
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(API + path, init);
+  const r = await fetch(API + path, { credentials: CRED, ...init });
   const body = await r.json().catch(() => null);
   if (!r.ok) throw new ApiError(r.status, body?.detail ?? body);
   return body as T;
@@ -27,8 +30,20 @@ export const api = {
   validate: (doc: ScdpDoc) => call<{ ok: boolean; issues: Issue[] }>("/api/v1/validate", json(doc)),
   run: (doc: ScdpDoc, plan: "B1" | "B1S" | "OPT", time_limit_s?: number, stability_loop = false) =>
     call<RunResult>("/api/v1/run", json({ doc, options: { plan, time_limit_s, stability_loop } })),
+  me: () => call<Me>("/api/v1/me"),
+  projects: () => call<ProjectRow[]>("/api/v1/projects"),
+  createProject: (code: string, name: string, doc?: ScdpDoc) =>
+    call<{ id: string; version: VersionRow | null }>("/api/v1/projects", json({ code, name, doc })),
+  project: (id: string) => call<ProjectInfo>(`/api/v1/projects/${id}`),
+  saveVersion: (pid: string, doc: ScdpDoc, note = "") => call<VersionRow>(`/api/v1/projects/${pid}/versions`, json({ doc, note })),
+  version: (vid: string) => call<VersionRow & { doc: ScdpDoc }>(`/api/v1/versions/${vid}`),
+  projectRun: (pid: string, version_id: string, options: RunOptions) =>
+    call<RunResult & { run_id: string }>(`/api/v1/projects/${pid}/runs`, json({ version_id, options })),
+  storedRun: (rid: string) => call<RunResult & { run_id: string; version_id: string }>(`/api/v1/runs/${rid}`),
+  addMember: (pid: string, email: string, role: Role) => call<{ user_id: string }>(`/api/v1/projects/${pid}/members`, json({ email, role })),
+  removeMember: (pid: string, uid: string) => call<{ ok: boolean }>(`/api/v1/projects/${pid}/members/${uid}`, { method: "DELETE" }),
   report: async (doc: ScdpDoc, plan: "B1" | "B1S" | "OPT", time_limit_s?: number, stability_loop = false) => {
-    const r = await fetch(API + "/api/v1/report", json({ doc, options: { plan, time_limit_s, stability_loop } }));
+    const r = await fetch(API + "/api/v1/report", { credentials: CRED, ...json({ doc, options: { plan, time_limit_s, stability_loop } }) });
     if (!r.ok) throw new ApiError(r.status, (await r.json().catch(() => null))?.detail);
     const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") ?? "")?.[1] ?? "SCDP_report.xlsx";
     download(await r.blob(), name);

@@ -3,10 +3,11 @@ import BayPlan, { BayLegend } from "./components/BayPlan";
 import Gantt from "./components/Gantt";
 import LineChart from "./components/LineChart";
 import QuayStrip from "./components/QuayStrip";
+import ProjectsPanel, { type Current } from "./components/ProjectsPanel";
 import View3D from "./components/View3D";
 import { api, ApiError, download } from "./lib/api";
 import { endTime, fmtTime, ganttBars, stateAt } from "./lib/replay";
-import type { Issue, RunResult, ScdpDoc } from "./lib/types";
+import type { Issue, Me, RunResult, ScdpDoc } from "./lib/types";
 
 const TABS = ["01 Dữ liệu", "02 Bay plan", "03 Thiết bị", "04 Ổn định", "05 Tối ưu & DES", "06 Lần lặp DES", "07 Replay 2D/3D", "08 KPI", "09 Kịch bản"] as const;
 const NEEDS_RUN: Tab[] = ["04 Ổn định", "06 Lần lặp DES", "07 Replay 2D/3D", "08 KPI"];
@@ -26,23 +27,38 @@ export default function App() {
   const [loop, setLoop] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [me, setMe] = useState<Me | null>(null);
+  const [current, setCurrent] = useState<Current>({ project: null, versionId: null });
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setErr("Không kết nối được API – chạy backend: uvicorn app.main:app --app-dir backend"));
     api.cases().then(setCases).catch(() => undefined);
+    api.me().then(setMe).catch(() => undefined);
   }, []);
 
   const fail = (e: unknown) => setErr(e instanceof ApiError ? `${e.message}: ${JSON.stringify(e.detail).slice(0, 400)}` : String(e));
 
-  async function load(d: ScdpDoc) {
+  async function load(d: ScdpDoc, versionId: string | null = null) {
     setDoc(d); setRun(null); setErr("");
+    setCurrent((c) => ({ ...c, versionId }));
     try { setIssues((await api.validate(d)).issues); } catch (e) { fail(e); }
   }
 
   async function doRun() {
     if (!doc) return;
     setBusy(true); setErr("");
-    try { setRun(await api.run(doc, plan, limit, loop)); setTab("07 Replay 2D/3D"); } catch (e) { fail(e); } finally { setBusy(false); }
+    try {
+      const p = current.project;
+      if (p && p.role !== "VIEWER") {
+        // the version endpoint returns the existing version when the document is unchanged
+        const v = await api.saveVersion(p.id, doc);
+        setRun(await api.projectRun(p.id, v.id, { plan, time_limit_s: limit, stability_loop: loop }));
+        setCurrent({ project: await api.project(p.id), versionId: v.id });
+      } else {
+        setRun(await api.run(doc, plan, limit, loop));
+      }
+      setTab("07 Replay 2D/3D");
+    } catch (e) { fail(e); } finally { setBusy(false); }
   }
 
   return (
@@ -52,7 +68,13 @@ export default function App() {
           <h1 className="text-xl font-semibold text-slate-900">OSE Smart Container Discharge Planner</h1>
           <p className="text-xs text-slate-500">Bản phát triển (G2a, G2b đạt) · engine {health?.engine_version ?? "?"} · solver {health ? (health.ortools ? "OR-Tools sẵn sàng" : "chưa có OR-Tools") : "?"}</p>
         </div>
-        <span className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">Ổn định tàu: G2b – chưa đối chiếu loading computer, không có PASS – không dùng cho tác nghiệp</span>
+        <div className="flex flex-wrap items-center gap-2">
+          {me?.login && (me.email
+            ? <span className="text-xs text-slate-600">{me.email} · gói <b>{me.plan === "pro" ? "đầy đủ" : "Demo"}</b> · <a className="text-sky-700 underline" href={me.account_url}>tài khoản Hub</a></span>
+            : <a className="rounded border border-sky-700 px-2 py-1 text-xs text-sky-700" href={me.account_url}>Đăng nhập Port &amp; Logistics Hub</a>)}
+          {current.project && <span className="rounded bg-sky-100 px-2 py-1 text-xs text-sky-800">Dự án {current.project.code}{current.versionId ? ` · v${current.project.versions.find((v) => v.id === current.versionId)?.n ?? "?"}` : " · dữ liệu chưa lưu"}</span>}
+          <span className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">Ổn định tàu: G2b – chưa đối chiếu loading computer, không có PASS – không dùng cho tác nghiệp</span>
+        </div>
       </header>
       <nav className="mb-4 flex flex-wrap gap-1 border-b border-slate-200">
         {TABS.map((t) => (
@@ -62,7 +84,16 @@ export default function App() {
       </nav>
       {err && <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{err}</div>}
 
-      {tab === "01 Dữ liệu" && <DataTab cases={cases} doc={doc} issues={issues} onLoad={load} onError={fail} />}
+      {tab === "01 Dữ liệu" && (
+        <div className="space-y-4">
+          {me && (me.email || !me.login) && (
+            <ProjectsPanel me={me} doc={doc} current={current} onCurrent={setCurrent} onError={fail}
+              onDoc={(d, vid) => load(d, vid)}
+              onRun={(r, d, vid) => { load(d, vid).then(() => { setRun(r); setTab("07 Replay 2D/3D"); }); }} />
+          )}
+          <DataTab cases={cases} doc={doc} issues={issues} onLoad={(d) => load(d)} onError={fail} plan={me?.plan ?? "pro"} />
+        </div>
+      )}
       {tab === "02 Bay plan" && doc && (<div className="space-y-3"><BayLegend /><BayPlan doc={doc} /></div>)}
       {tab === "05 Tối ưu & DES" && doc && (
         <section className="space-y-4">
@@ -71,7 +102,7 @@ export default function App() {
               <select value={plan} onChange={(e) => setPlan(e.target.value as "B1" | "B1S" | "OPT")} className="ml-2 rounded border px-2 py-1">
                 <option value="B1">B1 – theo quy tắc</option>
                 <option value="B1S">B1S – chia đều, bay biên làm chung</option>
-                <option value="OPT" disabled={!health?.ortools}>Tối ưu CP-SAT</option>
+                <option value="OPT" disabled={!health?.ortools || me?.plan === "demo"}>Tối ưu CP-SAT{me?.plan === "demo" ? " (gói đầy đủ)" : ""}</option>
               </select>
             </label>
             <label className="text-sm">Giới hạn thời gian giải (s)
@@ -105,8 +136,8 @@ export default function App() {
   );
 }
 
-function DataTab({ cases, doc, issues, onLoad, onError }: { cases: { id: string; title: string; containers: number; data_status: string }[];
-  doc: ScdpDoc | null; issues: Issue[]; onLoad: (d: ScdpDoc) => void; onError: (e: unknown) => void }) {
+function DataTab({ cases, doc, issues, onLoad, onError, plan }: { cases: { id: string; title: string; containers: number; data_status: string }[];
+  doc: ScdpDoc | null; issues: Issue[]; onLoad: (d: ScdpDoc) => void; onError: (e: unknown) => void; plan: "pro" | "demo" }) {
   const file = useRef<HTMLInputElement>(null);
   const counts = useMemo(() => {
     if (!doc) return null;
@@ -128,13 +159,13 @@ function DataTab({ cases, doc, issues, onLoad, onError }: { cases: { id: string;
         </div>
         <div className="rounded border border-slate-200 bg-white p-3">
           <h2 className="mb-2 text-sm font-semibold">Nhập tệp scdp-input/0.1</h2>
-          <input ref={file} type="file" accept=".json,.xlsx" className="text-sm"
+          <input ref={file} type="file" accept=".json,.xlsx" className="text-sm" disabled={plan === "demo"}
             onChange={async (e) => {
               const f = e.target.files?.[0];
               if (!f) return;
               try { const r = await api.importFile(f); onLoad(r.doc); } catch (er) { onError(er); }
             }} />
-          <p className="mt-1 text-xs text-slate-500">JSON hoặc Excel mẫu (SCDP_input_template). Dữ liệu không được lưu trên máy chủ.</p>
+          <p className="mt-1 text-xs text-slate-500">JSON hoặc Excel mẫu (SCDP_input_template). {plan === "demo" ? "Nhập tệp cần gói đầy đủ." : "Dữ liệu chỉ được lưu khi đang mở một dự án."}</p>
         </div>
       </div>
       {doc && counts && (
